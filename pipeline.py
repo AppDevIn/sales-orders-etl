@@ -29,8 +29,8 @@ def main():
         customers=customers,
         customers_file=customers_path.name,
     )
-    fact_count, rejected_count, completed_revenue = rebuild_database(
-        database_path, result.orders, result.rejected_rows
+    fact_count, rejected_count, completed_revenue, passed_checks = rebuild_database(
+        database_path, customers.values(), result.orders, result.rejected_rows
     )
     rejected_by_file = Counter(row["source_file"] for row in result.rejected_rows)
 
@@ -47,9 +47,9 @@ def main():
             f"  {change.order_id}: {change.previous_status} -> "
             f"{change.status} in {change.source_file}"
         )
-    print("Checks passed:")
-    print("  no duplicate order_id")
-    print("  no dates outside December 2025")
+    print(f"Checks passed ({len(passed_checks)}):")
+    for description in passed_checks:
+        print(f"  {description}")
 
 
 if __name__ == "__main__":

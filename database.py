@@ -4,19 +4,21 @@ import sqlite3
 from dataclasses import asdict
 
 
-def rebuild_database(database_path, clean_orders, rejected_rows):
+def rebuild_database(database_path, customers, clean_orders, rejected_rows):
     """Atomically replace all output tables so repeated runs cannot double rows."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         drop_output_tables(connection)
+        create_customers(connection)
         create_fact_orders(connection)
         create_rejected_orders(connection)
+        insert_customers(connection, customers)
         insert_fact_orders(connection, clean_orders)
         insert_rejected_orders(connection, rejected_rows)
         create_daily_revenue(connection)
-        run_checks(connection)
-        return load_summary(connection)
+        passed_checks = run_checks(connection)
+        return (*load_summary(connection), passed_checks)
 
 
 def drop_output_tables(connection):
@@ -24,6 +26,33 @@ def drop_output_tables(connection):
     connection.execute("DROP TABLE IF EXISTS daily_revenue_by_region")
     connection.execute("DROP TABLE IF EXISTS rejected_orders")
     connection.execute("DROP TABLE IF EXISTS fact_orders")
+    connection.execute("DROP TABLE IF EXISTS customers")
+
+
+def create_customers(connection):
+    """Create the customer master table loaded from customers.csv."""
+    connection.execute(
+        """
+        CREATE TABLE customers (
+            customer_id TEXT PRIMARY KEY,
+            customer_name TEXT NOT NULL,
+            region TEXT NOT NULL,
+            signup_date TEXT NOT NULL
+        )
+        """
+    )
+
+
+def insert_customers(connection, customers):
+    """Load every customer from the master file."""
+    connection.executemany(
+        """
+        INSERT INTO customers VALUES (
+            :customer_id, :customer_name, :region, :signup_date
+        )
+        """,
+        [asdict(customer) for customer in customers],
+    )
 
 
 def create_fact_orders(connection):
@@ -135,27 +164,68 @@ def load_summary(connection):
     return fact_count, rejected_count, completed_revenue
 
 
-def run_checks(connection):
-    """Stop the run if core data-quality guarantees are broken."""
-    checks = [
-        (
-            "no duplicate order_id",
-            """
-            SELECT COUNT(*) FROM (
-                SELECT order_id FROM fact_orders
-                GROUP BY order_id HAVING COUNT(*) > 1
+CHECKS = [
+    (
+        "no duplicate order_id in fact_orders",
+        """
+        SELECT COUNT(*) FROM (
+            SELECT order_id FROM fact_orders
+            GROUP BY order_id HAVING COUNT(*) > 1
+        )
+        """,
+    ),
+    (
+        "no dates outside December 2025",
+        """
+        SELECT COUNT(*) FROM fact_orders
+        WHERE order_date < '2025-12-01' OR order_date >= '2026-01-01'
+        """,
+    ),
+    (
+        "no quantity of 0 or less in fact_orders",
+        "SELECT COUNT(*) FROM fact_orders WHERE quantity IS NULL OR quantity <= 0",
+    ),
+    (
+        "revenue is stored as a number for every order",
+        """
+        SELECT COUNT(*) FROM fact_orders
+        WHERE typeof(revenue) NOT IN ('real', 'integer')
+        """,
+    ),
+    (
+        "status is Pending, Completed or Cancelled",
+        """
+        SELECT COUNT(*) FROM fact_orders
+        WHERE status NOT IN ('Pending', 'Completed', 'Cancelled')
+        """,
+    ),
+    (
+        "every fact_orders customer_id exists in customers",
+        """
+        SELECT COUNT(*) FROM fact_orders
+        WHERE customer_id NOT IN (SELECT customer_id FROM customers)
+        """,
+    ),
+    (
+        "daily_revenue_by_region total matches Completed revenue in fact_orders",
+        """
+        SELECT CASE WHEN ABS(
+            COALESCE((SELECT SUM(revenue) FROM daily_revenue_by_region), 0)
+            - COALESCE(
+                (SELECT SUM(revenue) FROM fact_orders WHERE status = 'Completed'), 0
             )
-            """,
-        ),
-        (
-            "no dates outside December 2025",
-            """
-            SELECT COUNT(*) FROM fact_orders
-            WHERE order_date < '2025-12-01' OR order_date >= '2026-01-01'
-            """,
-        ),
-    ]
-    for description, query in checks:
+        ) > 0.05 THEN 1 ELSE 0 END
+        """,
+    ),
+]
+
+
+def run_checks(connection):
+    """Stop the run if a data-quality guarantee is broken; return the passed checks."""
+    passed = []
+    for description, query in CHECKS:
         failure_count = connection.execute(query).fetchone()[0]
         if failure_count:
             raise ValueError(f"Check failed: {description} ({failure_count} rows)")
+        passed.append(description)
+    return passed

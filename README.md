@@ -21,6 +21,7 @@ python3 pipeline.py --input-dir /path/to/csvs --database /path/to/sales.db
 
 ## Output tables
 
+- `customers`: the 40 customers from `customers.csv`, loaded as-is
 - `fact_orders`: 270 clean orders, exactly one row per `order_id`
 - `daily_revenue_by_region`: Completed orders (`orders`) and revenue by order date and region
 - `rejected_orders`: 6 rejected source rows with their original values, source file, source row, and rejection reason
@@ -48,9 +49,14 @@ Status changes (later file wins):
   100170: Pending -> Completed in orders_2025-12-03.csv
   100152: Pending -> Completed in orders_2025-12-03.csv
   100027: Pending -> Completed in orders_2025-12-03.csv
-Checks passed:
-  no duplicate order_id
+Checks passed (7):
+  no duplicate order_id in fact_orders
   no dates outside December 2025
+  no quantity of 0 or less in fact_orders
+  revenue is stored as a number for every order
+  status is Pending, Completed or Cancelled
+  every fact_orders customer_id exists in customers
+  daily_revenue_by_region total matches Completed revenue in fact_orders
 ```
 
 ## Terminal output: run 2
@@ -76,9 +82,14 @@ Status changes (later file wins):
   100170: Pending -> Completed in orders_2025-12-03.csv
   100152: Pending -> Completed in orders_2025-12-03.csv
   100027: Pending -> Completed in orders_2025-12-03.csv
-Checks passed:
-  no duplicate order_id
+Checks passed (7):
+  no duplicate order_id in fact_orders
   no dates outside December 2025
+  no quantity of 0 or less in fact_orders
+  revenue is stored as a number for every order
+  status is Pending, Completed or Cancelled
+  every fact_orders customer_id exists in customers
+  daily_revenue_by_region total matches Completed revenue in fact_orders
 ```
 
 ## Rejected rows
@@ -131,9 +142,15 @@ These orders appeared in a later file with a changed status. The later file's ve
 - The pipeline performs a full refresh inside one SQLite transaction: it rebuilds all three output tables from the source files on every run. This makes daily re-runs idempotent and prevents doubled rows. If the run fails, the transaction rolls back instead of leaving partial tables.
 - The primary key on `fact_orders.order_id` enforces the one-row-per-order rule in the database as well as in Python.
 - Source filename and CSV line number are stored for traceability.
-- Two automated checks run before commit:
+- Seven automated checks run inside the transaction, before commit. If any fails, the run stops with an error naming the check and the number of offending rows, and the previous tables are left untouched:
   1. no duplicate `order_id` values in `fact_orders`;
-  2. no order dates outside December 2025.
+  2. no order dates outside December 2025;
+  3. no quantity of 0 or less in `fact_orders`;
+  4. `revenue` has a numeric SQLite type for every order;
+  5. `status` is one of Pending, Completed or Cancelled;
+  6. every `customer_id` in `fact_orders` exists in `customers`;
+  7. the total of `daily_revenue_by_region.revenue` equals Completed revenue in `fact_orders`.
+- Unit tests in `test/` cover the row validation rules and each check (`python3 -m pytest`).
 
 ## Improvement with more time
 
