@@ -30,7 +30,7 @@ Total Completed revenue: **$312,130.38**
 ## Terminal output: run 1
 
 ```text
-Database: /Users/jeya/Downloads/Data Engineer/data-pipeline/sales.db
+Database: /Users/jeya/Downloads/Data Engineer/sales.db
 fact_orders: 270
 rejected_orders: 6
 Completed revenue: $312,130.38
@@ -58,7 +58,7 @@ Checks passed:
 The second run produced the same counts and revenue, confirming that rows were not doubled.
 
 ```text
-Database: /Users/jeya/Downloads/Data Engineer/data-pipeline/sales.db
+Database: /Users/jeya/Downloads/Data Engineer/sales.db
 fact_orders: 270
 rejected_orders: 6
 Completed revenue: $312,130.38

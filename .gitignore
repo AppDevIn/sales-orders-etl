@@ -2,8 +2,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.db
+.DS_Store
 
-data-pipeline/data/
+data/
 
 exam_brief.docx
 ~$*.docx
